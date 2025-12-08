@@ -1,0 +1,325 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+% \usepackage{biblatex}
+% \addbibresource{bibliography.bib}
+\usepackage{natbib}
+\bibliographystyle{unsrt}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{subfigure}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{tcolorbox}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{pgfgantt}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{booktabs} % For professional looking tables
+\usepackage{multirow} % To merge cells vertically
+\usepackage[a4paper, total={7in, 10in}]{geometry}
+
+% --- Helper Macros for formatting ---
+% \ensuremath ensures epsilon works in both text and math mode, preventing "Missing $" errors
+\newcommand{\eps}{\ensuremath{\epsilon}} 
+
+% Command for Terminals (e.g., "int", "extern")
+\newcommand{\T}[1]{\texttt{"#1"}}
+
+% Command for Special Terminals (IDENT, INT_LIT)
+\newcommand{\ST}[1]{\textbf{\texttt{#1}}}
+
+% Command for Non-Terminals
+\newcommand{\NT}[1]{\textit{#1}}
+
+\title{CS342 Report}
+\author{u2204449}
+\date{}
+\begin{document}
+\maketitle
+
+\section*{Part A - Feature Extraction and Bayes Classifier}
+\subsection*{1. Feature Extraction}
+The feature extraction code is given in the assignment, and outputs a file \texttt{celeba\_vit\_embeddings.npy}. This file contains the encoded information from a transformer model representing the features of each of the 20,000 images from the celeba dataset. This file stores the feature representations of the images used for the rest of the coursework, and is useful for the reason that this reduces the dimensionality of each image from the number of pixels in it (width in pixels x height in pixels) to just 768.\\
+
+Next, the SKlearn library's \texttt{train\_test\_split} function was used to randomly partition the dataset into the train set (70\%), calibration set(15\%) and test set(15\%). This library allows the user to provide a seed for the random partitioning, which is useful as this allows consistent extraction over multiple project development sessions.
+
+\subsection*{2. Train Classifiers}
+First, SKlearn's in-built GaussianNB class was used to create a baseline reliability diagram, against which I could compare my model to know when it works correctly. Next, I created my own GaussianNaiveBayes class, which inherits from SKlearn's \texttt{ClassifierMixin} and \texttt{BaseEstimator} classes. Inheriting from SKlearn's classes was important for Part D, where \texttt{FrozenEstimator} wraps the custom GaussianNaiveBayes class for Platt and Isotonic scaling. \\
+
+The class itself implements a \texttt{fit} function, which takes the training input data and labelled classes as input, and essentially initialises the class with with the classes in the data (here - \{0, 1\}), the 'mean' data value for each class (so, the mean of all input vectors whose label corresponds to 0, and to 1), the same for the variance, and the proportion of data points that are contained within the corresponding class. This is how the model initially estimates the mean and variance of the corresponding Gaussian of the two classes. \\
+
+Using the initialised parameters, the class also implements a \texttt{predict\_proba} function, which calculates the posterior probability of each class for a given input vector. This function works by applying Bayes' theorem using the learned Gaussian distributions and the prior probabilities for each class. In practice, the log of the probabilities is used to avoid issues with numerical underflow, as multiplying together 768 small probability values can result in extremely small numbers. Once the log-probabilities for each class are computed, they are converted back into standard probability values and normalised so that the class probabilities sum to 1 for each input sample. \\
+
+The \texttt{predict} function then selects the class index corresponding to the highest probability value, and returns the predicted class label for each input. This predicted value corresponds to the Smiling attribute of the image, where 1 indicates the subject is smiling and 0 indicates they are not. \\
+
+A key design choice in this implementation was the assumption of conditional independence between features. While in reality this assumption is not strictly true for visual embeddings, it simplifies the computation and follows the theoretical definition of Naive Bayes. Another important implementation choice was the addition of a very small constant ($1 \times 10^{-9}$) to the variance in order to prevent division by zero errors in cases where a particular feature had extremely low variance within one class. \\
+
+The test accuracy reported by the custom GNB is $0.747$. Although Gaussian Naive Bayes is unlikely to outperform more complex models such as deep neural networks, it provides a strong and interpretable baseline. An advantage of this approach is its computational efficiency and ease of implementation. The model trains very quickly and requires relatively few parameters to be stored (only the class means, variances and priors). \\
+
+If I were to extend this work, I could experiment with removing the independence assumption by using a full covariance matrix per class, effectively implementing a Gaussian discriminant analysis model. Alternatively, I could replace Naive Bayes altogether with a more sophisticated classifier, such as logistic regression or a support vector machine, while keeping the same extracted ViT features. This would allow for a clearer comparison between simple probabilistic models and discriminative classifiers on the same feature space.
+
+\section*{Part B - Population Calibration}
+
+Figure \ref{fig:orig_rel} shows the plotted reliability diagram based on the predicted probabilities from the custom \texttt{GaussianNaiveBayes} class. The reliability diagram is plotted by identifying \texttt{bin edges} (0, 0.1, ... 1.0); iterating through each pair of edges; and creating a boolean array for each data point according to if its prediction lies within both edges. For the non-empty bins, the mean of the corresponding probability for both the predicted and true labels is appended to the output lists. As such, values within the bin-edge ranges are binned to their mean rather than to the lower-bound edge.\\
+
+It is clear that the model is under-confident for lower predicted probabilities $(<0.3)$. This means that when the model predicts a low chance of smiling, the actual fraction of smiling images is higher than predicted (the curve lies above the diagonal). Conversely, for higher predicted probabilities $(>0.4)$, the model becomes over-confident.\\
+
+At the 50-60\% mark, there is a sharp drop where the model predicts $\approx 0.65$ probability, but the fraction of positives is 0. However, it can be seen in Figure \ref{fig:orig_hist} that the frequency of predictions in this central region is extremely low compared to the outer edges (note the logarithmic scale on the y-axis). This suggests that the erratic behaviour in the middle of the reliability diagram is likely due to high variance resulting from a lack of data points in those specific bins, rather than a systematic preference for predicting 0.5.\\
+
+For a well-calibrated model, we would expect to see the histogram show a more uniform distribution, implying it uses the full range of probabilities to estimate the likelihood of an image smiling. Instead, Figure \ref{fig:orig_hist} displays a "U-shaped" distribution. According to the Scikit-Learn website \cite{sklearn-nb-calib}, Gaussian Naive Bayes (GNB) models tend to push probabilities to 0 and 1. This is because of the independence assumption being incorrect in practice; our dataset clearly has redundant (correlated) features which amplify the predicted probabilities toward the extremes.\\
+
+The Expected Calibration Error (ECE) on the test set is 0.2435, and the Mean Squared Error (MSE) is 0.2466. These relatively high error scores show that the model is not well-calibrated.
+
+\begin{figure}[htbp] 
+    \centering 
+    \begin{minipage}{0.48\linewidth} 
+        \centering 
+        \includegraphics[width=\linewidth]{orig_rel_diag_s42.png} 
+        \caption{Reliability Diagram for uncalibrated calibration set} 
+        \label{fig:orig_rel} 
+    \end{minipage}
+    \hfill 
+    \begin{minipage}{0.48\linewidth} 
+        \centering 
+        \includegraphics[width=\linewidth]{orig_hist_s42.png} 
+        \caption{Histogram of probabilities on uncalibrated calibration set} 
+        \label{fig:orig_hist} 
+    \end{minipage} 
+\end{figure}
+
+\section*{Part C - Subgroup Calibration}
+
+Reliability diagrams were generated for the selected subgroups. The predicted probabilities $\hat{p}(x)$ were binned, and the Expected Calibration Error (ECE) and Mean Squared Error (MSE) were computed for each subgroup. Table \ref{fig:subgroup-metrics} summarizes the sample size, accuracy, and calibration metrics for each subgroup. Figure \ref{fig:subgroup-plots} shows their reliability diagrams.\\
+
+The Wearing Hat subgroup is the least well-calibrated, with the highest ECE (0.2928) and MSE (0.2902). As seen in the bottom-left plot of Figure \ref{fig:subgroup-plots}, the reliability curve is heavily under-confident, displaying that the model predicts very low probabilities for cases when the subject really is smiling. This instability is likely caused by the small sample size (N=135), where single data points can drastically skew bin averages, and hats tend to conceal facial features which may make the ViT feature extraction model perform worse for those images. The Male subgroup is the second worst-performing subgroup (ECE: 0.2605). Its reliability diagram shows extreme oscillations, dropping to 0 fraction of positives even when the model predicts moderate probabilities. Perhaps men smile more subtly than women?\\
+
+The overall calibration significantly conceals subgroup differences. In Part B, the global ECE was calculated as 0.2435. While the most well-represented subgroups (e.g., Not Wearing Hat with ECE 0.2412 and Not Blond Hair with ECE 0.2434) align closely with this global average, 'Wearing hat' diverges sharply from the global, as does the 'Male' subgroup, to a lesser extent. .\\
+
+Relying solely on the population-level metric suggests a moderate level of calibration that disguises the fact that the model is highly unreliable for specific minorities (Hat wearers and Blonds). This indicates that the model is not fair with respect to calibration error: a user with a hat cannot trust the model's confidence score as much as a user without one.
+
+\begin{figure}[ht]
+\centering
+\begin{tabular}{lrrrr}
+\hline
+\textbf{Subgroup} & \textbf{Size} & \textbf{Accuracy} & \textbf{ECE} & \textbf{MSE} \\
+\hline
+Male              & 1275 & 0.731765 & 0.260490 & 0.263129 \\
+Female            & 1725 & 0.758261 & 0.232188 & 0.234467 \\
+Young             & 2322 & 0.745047 & 0.246560 & 0.249199 \\
+Not Young         & 678  & 0.753687 & 0.237651 & 0.237911 \\
+Blond Hair        & 421  & 0.745843 & 0.249107 & 0.249377 \\
+Not Blond Hair    & 2579 & 0.747189 & 0.243350 & 0.246202 \\
+Wearing Hat       & 135  & 0.703704 & 0.292793 & 0.290167 \\
+Not Wearing Hat   & 2865 & 0.749040 & 0.241180 & 0.244597 \\
+\hline
+\end{tabular}
+\caption{Performance metrics by subgroup}
+\label{fig:subgroup-metrics}
+\end{figure}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.9\linewidth]{subgroup_rel_diags_s42.png}
+    \caption{Reliability diagrams for sub-groubs of the data}
+    \label{fig:subgroup-plots}
+\end{figure}
+
+
+\newpage
+\section*{Part D}
+There are two general ways to find the optimal parameters $a$ and $b$ for the equation. We can find the closed form solution, or we can use gradient descent to iteratively work our way to the solution. The closed form solution gives the optimal parameters while only requiring one pass over all of the data points, i.e. $O(N)$, as it just needs to find the sums $\sum v$, $\sum t_v$, $\sum v^2$ and $\sum vt_v$, where $t_v$ represents the constant $\dfrac{\sum_{i:f(\mathbf{x}_i)=v} y_i}{n_v}$. However, the gradient descent solution requires $d\times N$ computations, where $d$ represents the number of iterations we would like to perform. I timed the functions in python and confirmed that the closed form solution takes around $1\times 10^{-4}$s, while gradient descent with $1000$ iterations takes around $1\times 10^{-2}$s. Below are the derivations for each solution.
+
+\subsection*{Closed Form Solution}
+
+To find the optimal parameters, we set the partial derivatives of the objective function $J$ to zero.\\\\
+Differentiating with respect to $b$:
+\begin{align*}
+    \frac{\partial J}{\partial b} = 2 \sum_{v \in S} (av + b - t_v) &= 0 \\
+    \implies \sum_{v \in S} t_v &= a \sum_{v \in S} v + N b
+\end{align*}
+Dividing by $N$, we isolate $b$ using the means $\bar{t}$ and $\bar{v}$:
+\begin{equation}
+    b = \bar{t} - a \bar{v}
+\end{equation}
+Differentiating with respect to $a$ and setting to zero:
+\begin{align*}
+    \frac{\partial J}{\partial a} = 2 \sum_{v \in S} v(av + b - t_v) &= 0 \\
+    \implies a \sum_{v \in S} v^2 + b \sum_{v \in S} v - \sum_{v \in S} v t_v &= 0
+\end{align*}
+Substituting $b = \bar{t} - a \bar{v}$ and rearranging terms:
+\begin{align*}
+    a \left( \sum_{v \in S} v^2 - N \bar{v}^2 \right) &= \sum_{v \in S} v t_v - N \bar{t} \bar{v}
+\end{align*}
+Solving for $a$:
+\begin{equation}
+    a = \frac{\sum_{v \in S} v t_v - N \bar{t} \bar{v}}{\sum_{v \in S} v^2 - N \bar{v}^2}
+\end{equation}
+
+\subsection*{Gradient Descent}
+
+We iteratively update parameters by moving against the gradient of the cost function $J(a,b) = \sum_{v \in S} (av + b - t_v)^2$.
+
+\subsubsection*{1. Gradients}
+Defining the error term as $e_v = (av + b - t_v)$, the partial derivatives are:
+\begin{align}
+    \frac{\partial J}{\partial b} &= 2 \sum_{v \in S} e_v \\
+    \frac{\partial J}{\partial a} &= 2 \sum_{v \in S} v \cdot e_v
+\end{align}
+
+\subsubsection*{2. Update Rules}
+For learning rate $\alpha$ (e.g. 0.01) and iteration $k$, the updates are:
+\begin{align}
+    b_{k+1} &\leftarrow b_k - 2\alpha \sum_{v \in S} (a_k v + b_k - t_v) \\
+    a_{k+1} &\leftarrow a_k - 2\alpha \sum_{v \in S} v(a_k v + b_k - t_v)
+\end{align}
+
+Both solutions give the same optimal parameters: $a=0.2594$, $b=0.2229$. Below is a plotted graph showing the resulting line.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\linewidth]{linear_calib.png}
+    \caption{Linear regression plotted against reliability curve}
+    \label{fig:placeholder}
+\end{figure}
+
+Here is a comparison of the different calibration methods after performing global calibration on the test set. While linear regression halves the population ECE, the Isotonic and Platt methods reduce it by over an order of magnitude - about $14\times$. 
+
+\begin{figure}[ht]
+    \centering
+    \begin{tabular}{lcc}
+        \toprule
+        Method & ECE & MSE \\
+        \midrule
+        Isotonic & 0.017709 & 0.174194 \\
+        Platt & 0.016305 & 0.187494 \\
+        Linear & 0.133023 & 0.219923 \\
+        Uncalibrated & 0.243502 & 0.246648 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Comparison of Calibration Methods}
+    \label{fig:calibration_results}
+\end{figure}
+
+Figure \ref{tab:subgroup_performance} displays the accuracy, ECE and MSE for each subgroup after each type of population calibration. The methods benefit the ECE and MSE scores for all subgroups, however the scale of this benefit is not universal. Isotonic and Platt methods both reduce the ECE for most subgroups by an order of magnitude, however the linear method does not benefit the ECE as much - only halving it in most cases, by comparison. Platt scaling reduces ECE more than Isotonic regression in most cases, suggesting that it is the better calibration method. The sub-group least affected by any type of calibration was 'Wearing hat', which is likely due to the very small sample size of the group not leaving very much room for statistical methods to improve it.\\
+
+In terms of accuracy, the story is different. The Linear method significantly reduced accuracy across all subgroups (e.g., Blond Hair dropped to $41.6\%$). This is a result of the learned parameters $a=0.2594$ and $b=0.2229$. This linear mapping compresses the output range to [0.22,0.48], since when applying the equation $\hat{p}=0.26p+0.22$, the range of results can only go from $\hat{p}=0.26(0)+0.22=0.22$ to $\hat{p}=0.26(1)+0.22=0.48$. Because the maximum calibrated probability (0.48) is less than the classification threshold of 0.5, the model predicts 'Not Smiling' for every instance. Unlike Isotonic and Platt scaling, simple linear regression does not preserve the decision boundary relative to the threshold. By comparison, Platt and Isotonic methods keep accuracy more or less the same, however Platt scaling does a better job of preserving and even improving accuracy in some cases.  \newpage
+
+\begin{figure}[ht]
+    \centering
+    
+    \begin{tabular}{lclccc}
+        \toprule
+        \textbf{Subgroup} & \textbf{Size} & \textbf{Method} & \textbf{Accuracy} & \textbf{ECE} & \textbf{MSE} \\
+        \midrule
+        \multirow{4}{*}{Blond Hair} & \multirow{4}{*}{421} 
+          & Isotonic & 0.739 & 0.051 & 0.173 \\
+        & & Linear & 0.416 & 0.182 & 0.233 \\
+        & & Platt & 0.746 & 0.022 & 0.189 \\
+        & & Uncalibrated & 0.746 & 0.249 & 0.249 \\
+        \midrule
+        \multirow{4}{*}{Female} & \multirow{4}{*}{1725} 
+          & Isotonic & 0.766 & 0.028 & 0.166 \\
+        & & Linear & 0.448 & 0.169 & 0.227 \\
+        & & Platt & 0.759 & 0.032 & 0.182 \\
+        & & Uncalibrated & 0.758 & 0.232 & 0.234 \\
+        \midrule
+        \multirow{4}{*}{Male} & \multirow{4}{*}{1275} 
+          & Isotonic & 0.722 & 0.046 & 0.186 \\
+        & & Linear & 0.600 & 0.086 & 0.210 \\
+        & & Platt & 0.732 & 0.020 & 0.195 \\
+        & & Uncalibrated & 0.732 & 0.260 & 0.263 \\
+        \midrule
+        \multirow{4}{*}{Not Blond Hair} & \multirow{4}{*}{2579} 
+          & Isotonic & 0.748 & 0.021 & 0.174 \\
+        & & Linear & 0.528 & 0.126 & 0.218 \\
+        & & Platt & 0.748 & 0.017 & 0.187 \\
+        & & Uncalibrated & 0.747 & 0.243 & 0.246 \\
+        \midrule
+        \multirow{4}{*}{Not Wearing Hat} & \multirow{4}{*}{2865} 
+          & Isotonic & 0.750 & 0.016 & 0.172 \\
+        & & Linear & 0.506 & 0.134 & 0.220 \\
+        & & Platt & 0.749 & 0.014 & 0.186 \\
+        & & Uncalibrated & 0.749 & 0.241 & 0.245 \\
+        \midrule
+        \multirow{4}{*}{Not Young} & \multirow{4}{*}{678} 
+          & Isotonic & 0.735 & 0.056 & 0.181 \\
+        & & Linear & 0.490 & 0.160 & 0.226 \\
+        & & Platt & 0.755 & 0.043 & 0.185 \\
+        & & Uncalibrated & 0.754 & 0.238 & 0.238 \\
+        \midrule
+        \multirow{4}{*}{Wearing Hat} & \multirow{4}{*}{135} 
+          & Isotonic & 0.674 & 0.143 & 0.217 \\
+        & & Linear & 0.644 & 0.116 & 0.226 \\
+        & & Platt & 0.704 & 0.101 & 0.213 \\
+        & & Uncalibrated & 0.704 & 0.293 & 0.290 \\
+        \midrule
+        \multirow{4}{*}{Young} & \multirow{4}{*}{2322} 
+          & Isotonic & 0.751 & 0.016 & 0.172 \\
+        & & Linear & 0.519 & 0.125 & 0.218 \\
+        & & Platt & 0.745 & 0.009 & 0.188 \\
+        & & Uncalibrated & 0.745 & 0.247 & 0.249 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Performance metrics (Accuracy, ECE, MSE) across different subgroups and calibration methods.}
+    \label{tab:subgroup_performance}
+\end{figure}
+
+Moving to multi-calibration, the algorithm was implemented using both the Isotonic and Platt calibration for comparison. Linear regression was used for the initial global calibration. On the histogram of Figure \ref{fig:global_calib} it can be observed that, as noted earlier, the model indeed loses all positive predictions ($>0.5$) due to the linear regression coefficients. \\
+
+After calibration, the model’s predicted probabilities become more balanced. The globally calibrated model mostly gives predictions close to 0, meaning it tends to be very confident in negative outcomes. In comparison, the multi-calibrated model produces a wider range of predictions. This can be seen in Figure \ref{fig:iso_platt_hist}, where the Isotonic and Platt distributions are spread out more evenly. The tallest bars in the histogram move away from the extreme ends of 0 and 1 and toward values around 0.2 and 0.8. This happens because calibration reduces overconfidence: extreme predictions are pulled closer to the actual frequencies seen in the data. As a result, the model becomes more cautious when assigning very high or very low probabilities.\\
+
+Figure \ref{fig:iso_platt_hist} also shows clear differences between the two calibration methods. Isotonic regression groups together nearby probability values and gives them the same output, which creates flat sections followed by sudden jumps — a “step-like” pattern. This makes the distribution appear flatter and slightly skewed to the left. Platt scaling, on the other hand, applies a smooth S-shaped curve to the predictions. This gently pushes values toward the middle while mostly keeping their original order. Because of this, the Platt-scaled predictions still show a U-shaped structure similar to the original model, while the Isotonic predictions look more even and flattened.\\
+
+\begin{figure}[]
+    \centering
+    \includegraphics[width=1\linewidth]{global_calib2.png}
+    \caption{Reliability diagram and histogram of predicted probabilities from globally calibrated model}
+    \label{fig:global_calib}
+\end{figure}
+
+\begin{figure}[]
+    \centering
+    \resizebox{\textwidth}{!}{% Resize table to fit page width if necessary
+    \begin{tabular}{c l cc c l cc}
+        \toprule
+        & \multicolumn{3}{c}{\textbf{Isotonic Regression}} & \phantom{a} & \multicolumn{3}{c}{\textbf{Platt Scaling}} \\
+        \cmidrule{2-4} \cmidrule{6-8}
+        \textbf{Iter} & \textbf{Worst Group} & \textbf{Group ECE} & \textbf{Pop ECE} && \textbf{Worst Group} & \textbf{Group ECE} & \textbf{Pop ECE} \\
+        \midrule
+        1 & Blond Hair     & 0.1824 & 0.1138 && Blond Hair     & 0.1824 & 0.1103 \\
+        2 & Not Young      & 0.1368 & 0.0907 && Not Young      & 0.1438 & 0.0831 \\
+        3 & Wearing Hat    & 0.1292 & 0.0887 && Female         & 0.1180 & 0.0362 \\
+        4 & Female         & 0.1154 & 0.0283 && Wearing Hat    & 0.0947 & 0.0339 \\
+        5 & Wearing Hat    & 0.0670 & 0.0255 && Male           & 0.0468 & 0.0162 \\
+        \bottomrule
+    \end{tabular}}
+    \caption{Multicalibration Performance Comparison: Isotonic Regression vs. Platt Scaling}
+    \label{tab:multical_comparison}
+\end{figure}
+
+\begin{figure}[]
+    \centering
+    \includegraphics[width=1\linewidth]{ECE_evolution.png}
+    \caption{Evolution of Worst-Group ECE and Population ECE, Isotonic vs Platt}
+    \label{fig:placeholder}
+\end{figure}
+
+\begin{figure}[]
+    \centering
+    \includegraphics[width=0.5\linewidth]{multicalib_rel.png}
+    \caption{Reliability diagrams for multicalibrated data, Isotonic vs Platt}
+    \label{fig:iso_platt_hist}
+\end{figure}
+
+\begin{figure}[]
+    \centering
+    \includegraphics[width=1\linewidth]{multicalib_hist.png}
+    \caption{Histograms of probabilities on malticalibrated data, Istonic vs Platt}
+    \label{fig:placeholder}
+\end{figure}
+
+\bibliography{bibliography}
+
+\end{document}
