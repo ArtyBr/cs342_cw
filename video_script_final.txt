@@ -1,0 +1,27 @@
+(Start video, screen showing the top of the `project.ipynb` notebook. I am visible in a small window.)
+
+Hello. This video provides an overview of my project on classifier calibration. The objective was to predict the 'Smiling' attribute from the CelebA dataset and analyze the reliability of the model's confidence scores.
+
+I used a pre-trained Vision Transformer for feature extraction. These features were then used to train a Gaussian Naive Bayes classifier which I implemented from scratch. My implementation calculates class priors and feature distributions, then applies Bayes' theorem to estimate posterior probabilities. To avoid numerical instability from multiplying many small probabilities, I performed the core calculations in log-space.
+
+(Scroll to the first reliability diagram and the probability histogram in Part B)
+
+The initial model's calibration was evaluated. This reliability diagram shows the model's performance. A perfectly calibrated model would follow the diagonal. My model's curve lies above the diagonal for low probabilities, indicating under-confidence, and drops below it for high probabilities, showing over-confidence. The high Expected Calibration Error of 0.24 quantifies this deviation.
+
+The corresponding histogram shows a 'U-shaped' distribution of predicted probabilities. This is a known characteristic of Naive Bayes classifiers when the feature independence assumption is not met, as is the case here. The model becomes overly certain, pushing probabilities to the extremes of 0 or 1.
+
+(Scroll to the subgroup reliability diagrams in Part C)
+
+Next, I conducted a subgroup calibration analysis. This revealed significant performance disparities hidden by the aggregate ECE. The 'Wearing Hat' subgroup, for instance, showed an ECE of 0.29 and was severely under-confident. This demonstrates that a model can be unfair, with its reliability varying substantially for different user groups.
+
+(Scroll to the calibration summary tables in Part D)
+
+To improve calibration, I explored post-hoc methods. I implemented a linear corrector by deriving its closed-form solution. While this improved the ECE, it destroyed classification accuracy, as the learned transformation mapped all probabilities to a range below the 0.5 decision threshold. In contrast, the more flexible Platt and Isotonic scaling methods successfully reduced the population ECE to below 0.02 while preserving accuracy.
+
+(Scroll to the multicalibration code and evolution plot in Part D)
+
+Finally, to directly address the fairness issue, I implemented an iterative multicalibration algorithm. This procedure identifies the worst-calibrated subgroup at each step, learns a specific calibration map from that group's data, and applies it only to members of that group. This targeted approach respects the distinct data distributions within each subgroup. The plot here shows how this method systematically reduces the worst-group ECE, leading to a fairer and more reliable model overall.
+
+Thank you.
+
+(End video)
